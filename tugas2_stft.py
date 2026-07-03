@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import cmath
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go # Untuk bikin grafik 3D yang keren dan bisa diputar
+import plotly.graph_objects as go # Untuk bikin grafik 3D yang keren
 
 # ==========================================
 # 1. FUNGSI MATEMATIKA & DSP MURNI
@@ -48,7 +48,7 @@ def generate_sinyal_buatan(N, fs):
 # ==========================================
 # 2. INISIALISASI MEMORI (SESSION STATE)
 # ==========================================
-# Ini supaya saat tombol diklik, datanya nggak hilang
+# Ini supaya saat tombol diklik, datanya nggak hilang atau ke-reset sendiri
 if 'data_mentah' not in st.session_state: st.session_state.data_mentah = []
 if 'data_siap' not in st.session_state: st.session_state.data_siap = []
 if 'hasil_stft' not in st.session_state: st.session_state.hasil_stft = None
@@ -63,7 +63,7 @@ st.title("Time-Frequency Analysis - STFT v1.0")
 # --- SIDEBAR (PANEL KONTROL SEPERTI DELPHI) ---
 with st.sidebar:
     # KOTAK 1: DATA
-    st.markdown("### 🟢 Data")
+    st.markdown("### Data")
     jenis_sinyal = st.radio("Pilih Sinyal:", ["Sinyal Buatan", "Sinyal ECG"])
     
     uploaded_file = None
@@ -111,7 +111,7 @@ with st.sidebar:
     st.markdown("---")
     
     # KOTAK 3: WINDOWING
-    st.markdown("### 🟢 Windowing")
+    st.markdown("### Windowing")
     window_type = st.radio("Pilih Window:", ["Rectangular", "Bartlett", "Hanning", "Hamming", "Blackman"], index=3)
     
     irisan = st.number_input("Irisan (Overlap):", value=0, min_value=0)
@@ -233,9 +233,26 @@ if st.session_state.hasil_stft is not None:
             fig3, ax3 = plt.subplots(figsize=(10, 2.5))
             # Background sinyal asli
             ax3.plot(range(N_plot), x_plot, color='lightgray', linewidth=0.5)
-            # Sinyal yang terpotong window
-            ax3.plot(waktu_window, data_terpilih['windowed_signal'], color='black', linewidth=1.2)
-            ax3.set_title(f"Sinyal Hasil Windowing (w = {w_pilihan}, Data = {data_terpilih['start_idx']}->{data_terpilih['end_idx']})", fontsize=10)
+            
+            # --- TRIK BUNGLON SEPERTI DELPHI ---
+            if w_pilihan == 0 and jml_w >= 3:
+                # Jika w = 0, tampilkan 3 potongan pertama (Merah, Biru, Hitam) overlap
+                w0 = stft_data[0]
+                w1 = stft_data[1]
+                w2 = stft_data[2]
+                
+                ax3.plot(range(w0['start_idx'], w0['end_idx'] + 1), w0['windowed_signal'], color='red', linewidth=1.2, label='w=0')
+                ax3.plot(range(w1['start_idx'], w1['end_idx'] + 1), w1['windowed_signal'], color='blue', linewidth=1.2, label='w=1')
+                ax3.plot(range(w2['start_idx'], w2['end_idx'] + 1), w2['windowed_signal'], color='black', linewidth=1.2, label='w=2')
+                
+                ax3.set_title(f"Sinyal Hasil Windowing (Overlap w=0, 1, 2)", fontsize=10)
+                ax3.legend(fontsize=7, loc='upper right')
+            else:
+                # Jika w digeser, tampilkan 1 potongan saja (Hitam)
+                ax3.plot(waktu_window, data_terpilih['windowed_signal'], color='black', linewidth=1.2)
+                ax3.set_title(f"Sinyal Hasil Windowing (w = {w_pilihan}, Data = {data_terpilih['start_idx']}->{data_terpilih['end_idx']})", fontsize=10)
+            # -----------------------------------
+            
             ax3.set_xlabel("n sample", fontsize=8)
             ax3.set_ylabel("Amplitude", fontsize=8)
             ax3.grid(True, linestyle=':')
