@@ -4,9 +4,6 @@ import cmath
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go 
 
-# ==========================================
-# 1. FUNGSI MATEMATIKA & DSP MURNI
-# ==========================================
 def next_power_of_2(x):
     return 1 if x == 0 else 2**(x - 1).bit_length()
 
@@ -79,8 +76,21 @@ with st.sidebar:
         else:
             if uploaded_file is not None:
                 raw_text = uploaded_file.getvalue().decode('utf-8').splitlines()
-                # Proses pembersihan string dari koma tak terlihat akibat format CSV
-                st.session_state.data_mentah = [float(line.replace(',', '').strip()) for line in raw_text if line.strip()]
+                
+                # --- LOGIKA BACA DATA ---
+                data_bersih = []
+                for line in raw_text:
+                    if line.strip():
+                        # Pecah baris berdasarkan koma
+                        parts = line.split(',')
+                        # Kalau ada banyak kolom (kayak file 100.csv), ambil kolom ke-2 (index 1)
+                        if len(parts) >= 2:
+                            data_bersih.append(float(parts[1]))
+                        # Kalau cuma 1 kolom (kayak screenshot-mu sebelumnya), ambil apa adanya
+                        else:
+                            data_bersih.append(float(parts[0]))
+                            
+                st.session_state.data_mentah = data_bersih
                 st.session_state.data_siap = st.session_state.data_mentah.copy()
                 st.session_state.hasil_stft = None
             else:
