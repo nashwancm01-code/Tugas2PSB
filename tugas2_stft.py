@@ -2,17 +2,16 @@ import streamlit as st
 import math
 import cmath
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go # Untuk bikin grafik 3D yang keren dan bisa diputar
 
 # ==========================================
-# 1. FUNGSI MATEMATIKA & DSP
+# 1. FUNGSI MATEMATIKA & DSP MURNI
 # ==========================================
 
 def next_power_of_2(x):
-    """Mencari nilai pangkat 2 terdekat ke atas (untuk padding FFT)."""
     return 1 if x == 0 else 2**(x - 1).bit_length()
 
 def radix2_fft(x):
-    """Algoritma Fast Fourier Transform (FFT) murni Python."""
     N = len(x)
     if N <= 1: return x
     even = radix2_fft(x[0::2])
@@ -21,7 +20,6 @@ def radix2_fft(x):
     return [even[k] + T[k] for k in range(N // 2)] + [even[k] - T[k] for k in range(N // 2)]
 
 def get_window(window_name, L):
-    """Membuat bentuk 'Pisau Potong' (Window) sesuai rumus di slide PDF."""
     w = []
     for n in range(L):
         if window_name == "Rectangular":
@@ -37,173 +35,252 @@ def get_window(window_name, L):
     return w
 
 def generate_sinyal_buatan(N, fs):
-    """
-    Membuat sinyal gabungan seperti di aplikasi dosen:
-    Sinyal berubah-ubah: 50Hz -> 150Hz -> 250Hz -> 350Hz.
-    """
     x = []
     for i in range(N):
         t = i / fs
-        # Sinyal berubah frekuensi tiap 1/4 bagian waktu
-        if i < N // 4:
-            f = 50
-        elif i < 2 * N // 4:
-            f = 150
-        elif i < 3 * N // 4:
-            f = 250
-        else:
-            f = 350
+        if i < N // 4: f = 50
+        elif i < 2 * N // 4: f = 150
+        elif i < 3 * N // 4: f = 250
+        else: f = 350
         x.append(math.sin(2 * math.pi * f * t))
     return x
 
 # ==========================================
-# 2. KONFIGURASI TAMPILAN STREAMLIT
+# 2. INISIALISASI MEMORI (SESSION STATE)
 # ==========================================
-st.set_page_config(page_title="STFT Analysis", layout="wide")
-st.title("Time-Frequency Analysis - STFT")
+# Ini supaya saat tombol diklik, datanya nggak hilang
+if 'data_mentah' not in st.session_state: st.session_state.data_mentah = []
+if 'data_siap' not in st.session_state: st.session_state.data_siap = []
+if 'hasil_stft' not in st.session_state: st.session_state.hasil_stft = None
+if 'fs' not in st.session_state: st.session_state.fs = 1024
 
-# --- SIDEBAR (PANEL KONTROL KIRI) ---
+# ==========================================
+# 3. KONFIGURASI TAMPILAN STREAMLIT
+# ==========================================
+st.set_page_config(page_title="Time-Frequency Analysis", layout="wide")
+st.title("Time-Frequency Analysis - STFT v1.0")
+
+# --- SIDEBAR (PANEL KONTROL SEPERTI DELPHI) ---
 with st.sidebar:
-    st.header("Panel Kontrol")
+    # KOTAK 1: DATA
+    st.markdown("### 🟢 Data")
+    jenis_sinyal = st.radio("Pilih Sinyal:", ["Sinyal Buatan", "Sinyal ECG"])
     
-    st.subheader("Data")
-    jenis_sinyal = st.radio("Pilih Sinyal:", ["Sinyal Buatan", "Sinyal ECG (Upload)"])
-    
-    if jenis_sinyal == "Sinyal ECG (Upload)":
+    uploaded_file = None
+    if jenis_sinyal == "Sinyal ECG":
         uploaded_file = st.file_uploader("Upload file .txt", type=["txt"])
+        
+    N_data = st.number_input("Jumlah Data:", value=1024, step=128)
+    fs_input = st.number_input("Frek. Sampling:", value=1024, step=128)
     
-    N_data = st.number_input("Jumlah Data (N):", value=1024, step=128)
-    fs = st.number_input("Frek. Sampling (fs):", value=1024, step=128)
+    if st.button("Proses Data"):
+        st.session_state.fs = fs_input
+        if jenis_sinyal == "Sinyal Buatan":
+            st.session_state.data_mentah = generate_sinyal_buatan(N_data, fs_input)
+            st.session_state.data_siap = st.session_state.data_mentah.copy()
+            st.session_state.hasil_stft = None # Reset hasil lama
+        else:
+            if uploaded_file is not None:
+                raw_text = uploaded_file.getvalue().decode('utf-8').splitlines()
+                st.session_state.data_mentah = [float(line.strip()) for line in raw_text if line.strip()]
+                st.session_state.data_siap = st.session_state.data_mentah.copy()
+                st.session_state.hasil_stft = None
+            else:
+                st.error("Upload file dulu ya!")
+
+    st.markdown("---")
+    
+    # KOTAK 2: SET PANJANG DATA
+    st.markdown("### 🟢 Set Panjang Data")
+    tipe_panjang = st.radio("Pilih Mode:", ["Full Data", "Ambil Data ke :"])
+    
+    c1, c2 = st.columns(2)
+    with c1: start_idx = st.number_input("Mulai", value=280, min_value=0)
+    with c2: end_idx = st.number_input("Sampai", value=579, min_value=1)
+    
+    if st.button("Proses Potong Data"):
+        if len(st.session_state.data_mentah) > 0:
+            if tipe_panjang == "Full Data":
+                st.session_state.data_siap = st.session_state.data_mentah.copy()
+            else:
+                st.session_state.data_siap = st.session_state.data_mentah[start_idx:end_idx+1]
+            st.session_state.hasil_stft = None
+        else:
+            st.warning("Proses Data Utama dulu di atas!")
+
+    st.markdown("---")
+    
+    # KOTAK 3: WINDOWING
+    st.markdown("### 🟢 Windowing")
+    window_type = st.radio("Pilih Window:", ["Rectangular", "Bartlett", "Hanning", "Hamming", "Blackman"], index=3)
+    
+    irisan = st.number_input("Irisan (Overlap):", value=0, min_value=0)
+    lebar_window = st.number_input("Lebar Window:", value=100, min_value=2)
+    
+    hop_size = lebar_window - irisan
+    if hop_size <= 0: hop_size = 1
+    
+    # Hitung otomatis jumlah window
+    jml_data_aktif = len(st.session_state.data_siap)
+    jumlah_window = 0
+    if jml_data_aktif > 0:
+        jumlah_window = max(0, (jml_data_aktif - lebar_window) // hop_size + 1)
+    
+    st.info(f"Jumlah Window: **{jumlah_window}**")
+    
+    if st.button("STFT", type="primary"):
+        if jml_data_aktif > 0:
+            # === LOGIKA STFT SEKALIGUS SIMPAN PER-WINDOW ===
+            x_input = st.session_state.data_siap
+            fs = st.session_state.fs
+            w = get_window(window_type, lebar_window)
+            nfft_stft = next_power_of_2(lebar_window)
+            
+            stft_data = [] # Menyimpan semua detail per potongan
+            stft_matrix = []
+            time_bins = []
+            
+            for start in range(0, jml_data_aktif - lebar_window + 1, hop_size):
+                segment = x_input[start : start + lebar_window]
+                windowed = [segment[i] * w[i] for i in range(lebar_window)]
+                padded = windowed + [0.0] * (nfft_stft - lebar_window)
+                
+                X_k = radix2_fft(padded)
+                mag = [abs(c) / nfft_stft for c in X_k[:nfft_stft // 2]]
+                
+                # Simpan paket lengkap untuk potongan ini
+                stft_data.append({
+                    'start_idx': start,
+                    'end_idx': start + lebar_window - 1,
+                    'windowed_signal': windowed,
+                    'spectrum': mag
+                })
+                
+                stft_matrix.append(mag)
+                time_bins.append((start + lebar_window / 2) / fs)
+            
+            freq_bins = [k * fs / nfft_stft for k in range(nfft_stft // 2)]
+            # Transpose untuk plot 2D/3D (Baris=Frekuensi, Kolom=Waktu)
+            stft_transposed = [[stft_matrix[col][row] for col in range(len(stft_matrix))] for row in range(len(stft_matrix[0]))]
+            
+            # Simpan semua ke memori
+            st.session_state.hasil_stft = {
+                'stft_data': stft_data,
+                'time_bins': time_bins,
+                'freq_bins': freq_bins,
+                'matrix_2d': stft_transposed,
+                'lebar_window': lebar_window,
+                'nfft': nfft_stft
+            }
+        else:
+            st.warning("Data kosong, jalankan Proses Data dulu!")
+
+# ==========================================
+# 4. PLOTTING AREA (BAGIAN KANAN)
+# ==========================================
+if len(st.session_state.data_siap) > 0:
+    x_plot = st.session_state.data_siap
+    fs_plot = st.session_state.fs
+    N_plot = len(x_plot)
+    waktu_plot = [i / fs_plot for i in range(N_plot)]
+    
+    # Hitung Spectrum Sinyal Input Utuh
+    N_fft_full = next_power_of_2(N_plot)
+    x_padded_full = x_plot + [0.0] * (N_fft_full - N_plot)
+    fft_full = radix2_fft(x_padded_full)
+    mag_full = [abs(c) / N_fft_full for c in fft_full[:N_fft_full // 2]]
+    freq_full = [k * fs_plot / N_fft_full for k in range(N_fft_full // 2)]
+
+    # --- BARIS 1: Sinyal Input & Spectrum Input ---
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig1, ax1 = plt.subplots(figsize=(10, 2.5))
+        ax1.plot(range(N_plot), x_plot, color='red', linewidth=0.8)
+        ax1.set_title("Sinyal Input", fontsize=10)
+        ax1.set_xlabel("n sample", fontsize=8)
+        ax1.set_ylabel("Amplitude", fontsize=8)
+        ax1.grid(True, linestyle=':')
+        st.pyplot(fig1)
+        
+    with col2:
+        fig2, ax2 = plt.subplots(figsize=(5, 2.5))
+        ax2.plot(freq_full, mag_full, color='red', linewidth=1)
+        ax2.set_title("Spectrum Sinyal Input", fontsize=10)
+        ax2.set_xlabel("Frekuensi (Hz)", fontsize=8)
+        ax2.set_ylabel("Magnitude", fontsize=8)
+        ax2.set_xlim(0, fs_plot / 2)
+        ax2.grid(True, linestyle=':')
+        st.pyplot(fig2)
+
+# --- JIKA TOMBOL STFT SUDAH DIKLIK ---
+if st.session_state.hasil_stft is not None:
+    res = st.session_state.hasil_stft
+    stft_data = res['stft_data']
     
     st.markdown("---")
-    st.subheader("Windowing")
-    window_type = st.radio("Pilih Jenis Window:", ["Rectangular", "Bartlett", "Hanning", "Hamming", "Blackman"], index=3)
     
-    lebar_window = st.number_input("Lebar Window (Panjang Potongan):", value=100, step=10)
-    irisan = st.number_input("Irisan (Overlap):", value=50, step=10)
-
-# ==========================================
-# 3. PROSES UTAMA (LOGIKA STFT)
-# ==========================================
-# Siapkan Data Input
-x_input = []
-if jenis_sinyal == "Sinyal Buatan":
-    x_input = generate_sinyal_buatan(N_data, fs)
-else:
-    if uploaded_file is not None:
-        raw_text = uploaded_file.getvalue().decode('utf-8').splitlines()
-        x_input = [float(line.strip()) for line in raw_text if line.strip()]
-        N_data = len(x_input)
-    else:
-        st.warning("Silakan upload file ECG terlebih dahulu.")
-        st.stop()
-
-# Bikin Sumbu Waktu (Time array)
-waktu = [i / fs for i in range(N_data)]
-
-# Bikin Window (Pisau Potong)
-w = get_window(window_type, lebar_window)
-hop_size = lebar_window - irisan
-if hop_size <= 0: hop_size = 1 # Mencegah error kalau irisan kepanjangan
-
-# --- HITUNG FFT FULL (Buat Grafik Kanan Atas) ---
-N_fft_full = next_power_of_2(N_data)
-x_padded_full = x_input + [0.0] * (N_fft_full - N_data)
-fft_full = radix2_fft(x_padded_full)
-mag_full = [abs(c) / N_fft_full for c in fft_full[:N_fft_full // 2]]
-freq_full = [k * fs / N_fft_full for k in range(N_fft_full // 2)]
-
-# --- HITUNG STFT (Proses Pemotongan & FFT Berulang) ---
-stft_matrix = []
-time_bins = []
-nfft_stft = next_power_of_2(lebar_window)
-
-# Menyimpan 3 window pertama untuk digambar (seperti di Delphi)
-contoh_window_plot = [] 
-
-for start_idx in range(0, N_data - lebar_window + 1, hop_size):
-    # 1. Potong sinyal (Truncate)
-    segment = x_input[start_idx : start_idx + lebar_window]
-    
-    # 2. Kalikan dengan Window (w(t))
-    windowed_segment = [segment[i] * w[i] for i in range(lebar_window)]
-    
-    # Simpan sampel potongan untuk grafik (Maksimal 3 potong pertama)
-    if len(contoh_window_plot) < 3:
-        contoh_window_plot.append((start_idx, windowed_segment))
-    
-    # 3. Padding nol biar panjangnya kelipatan 2 (syarat Radix-2 FFT)
-    padded_segment = windowed_segment + [0.0] * (nfft_stft - lebar_window)
-    
-    # 4. Hitung FFT dari potongan tersebut
-    X_k = radix2_fft(padded_segment)
-    
-    # Ambil setengah magnitudonya (karena simetris)
-    mag_stft = [abs(c) / nfft_stft for c in X_k[:nfft_stft // 2]]
-    
-    # 5. Simpan ke dalam Matriks Spectrogram
-    stft_matrix.append(mag_stft)
-    
-    # Titik tengah dari potongan window sebagai penanda waktu
-    waktu_tengah = (start_idx + lebar_window / 2) / fs
-    time_bins.append(waktu_tengah)
-
-# Bikin Sumbu Frekuensi untuk STFT
-freq_bins = [k * fs / nfft_stft for k in range(nfft_stft // 2)]
-
-# Transpose matriks STFT (Baris = Frekuensi, Kolom = Waktu) agar bisa di-plot Matplotlib
-stft_transposed = [[stft_matrix[col][row] for col in range(len(stft_matrix))] for row in range(len(stft_matrix[0]))]
-
-# ==========================================
-# 4. PLOTTING GRAFIK (MENIRU DELPHI)
-# ==========================================
-st.markdown("### Hasil Analisis")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    # Grafik 1: Sinyal Input Utuh
-    fig1, ax1 = plt.subplots(figsize=(10, 2))
-    ax1.plot(waktu, x_input, color='red', linewidth=0.8)
-    ax1.set_title("Sinyal Input", fontsize=10)
-    ax1.set_xlabel("Waktu (s)", fontsize=8)
-    ax1.set_ylabel("Amplitude", fontsize=8)
-    ax1.grid(True, linestyle=':')
-    st.pyplot(fig1)
-    
-    # Grafik 2: Visualisasi Sinyal Hasil Windowing (Tumpang tindih potongan)
-    fig2, ax2 = plt.subplots(figsize=(10, 2))
-    ax2.plot(waktu, x_input, color='lightgray', linewidth=0.5, label="Sinyal Asli") # Background sinyal asli
-    
-    warna = ['red', 'blue', 'black']
-    for idx, (start_idx, windowed_segment) in enumerate(contoh_window_plot):
-        waktu_segmen = [ (start_idx + i) / fs for i in range(lebar_window) ]
-        ax2.plot(waktu_segmen, windowed_segment, color=warna[idx], linewidth=1.2, label=f"Window {idx+1}")
+    # --- BARIS 2: Slider Window, Sinyal Windowing & Spectrum Windowing ---
+    jml_w = len(stft_data)
+    if jml_w > 0:
+        # SLIDER SEPERTI DI DELPHI
+        w_pilihan = st.slider(f"Pilih Window (w = 0 sampai {jml_w - 1})", 0, jml_w - 1, 0)
         
-    ax2.set_title(f"Sinyal Hasil Windowing (Mendemonstrasikan pemotongan)", fontsize=10)
-    ax2.set_xlabel("Waktu (s)", fontsize=8)
-    ax2.set_ylabel("Amplitude", fontsize=8)
-    ax2.legend(fontsize=7)
-    ax2.grid(True, linestyle=':')
-    st.pyplot(fig2)
+        data_terpilih = stft_data[w_pilihan]
+        waktu_window = range(data_terpilih['start_idx'], data_terpilih['end_idx'] + 1)
+        
+        col3, col4 = st.columns([2, 1])
+        with col3:
+            fig3, ax3 = plt.subplots(figsize=(10, 2.5))
+            # Background sinyal asli
+            ax3.plot(range(N_plot), x_plot, color='lightgray', linewidth=0.5)
+            # Sinyal yang terpotong window
+            ax3.plot(waktu_window, data_terpilih['windowed_signal'], color='black', linewidth=1.2)
+            ax3.set_title(f"Sinyal Hasil Windowing (w = {w_pilihan}, Data = {data_terpilih['start_idx']}->{data_terpilih['end_idx']})", fontsize=10)
+            ax3.set_xlabel("n sample", fontsize=8)
+            ax3.set_ylabel("Amplitude", fontsize=8)
+            ax3.grid(True, linestyle=':')
+            st.pyplot(fig3)
+            
+        with col4:
+            fig4, ax4 = plt.subplots(figsize=(5, 2.5))
+            freq_bins_w = res['freq_bins']
+            ax4.plot(freq_bins_w, data_terpilih['spectrum'], color='red', linewidth=1)
+            ax4.set_title("Spectrum Sinyal Hasil Windowing", fontsize=10)
+            ax4.set_xlabel("Frekuensi (Hz)", fontsize=8)
+            ax4.set_ylabel("Magnitude", fontsize=8)
+            ax4.set_xlim(0, fs_plot / 2)
+            ax4.grid(True, linestyle=':')
+            st.pyplot(fig4)
 
-with col2:
-    # Grafik 3: Spectrum FFT dari Sinyal Input Utuh
-    fig3, ax3 = plt.subplots(figsize=(5, 4.5))
-    ax3.plot(freq_full, mag_full, color='red', linewidth=1)
-    ax3.set_title("Spectrum Sinyal Input (FFT Total)", fontsize=10)
-    ax3.set_xlabel("Frekuensi (Hz)", fontsize=8)
-    ax3.set_ylabel("Magnitude", fontsize=8)
-    ax3.set_xlim(0, fs / 2)
-    ax3.grid(True, linestyle=':')
-    st.pyplot(fig3)
-
-# Grafik 4: Spectrogram (Hasil Akhir STFT 2D)
-st.markdown("### Spectrogram STFT 2D (Frekuensi vs Waktu)")
-fig4, ax4 = plt.subplots(figsize=(12, 4))
-c = ax4.pcolormesh(time_bins, freq_bins, stft_transposed, shading='gouraud', cmap='jet')
-fig4.colorbar(c, ax=ax4, label="Kekuatan Sinyal (Magnitude)")
-ax4.set_ylabel("Frekuensi (Hz)")
-ax4.set_xlabel("Waktu (s)")
-ax4.set_ylim(0, fs / 2) # Tampilkan hanya sampai batas Nyquist
-st.pyplot(fig4)
+    # --- BARIS 3: SPECTROGRAM 2D & 3D ---
+    col5, col6 = st.columns([1, 1])
+    
+    with col5:
+        st.markdown("##### 2D Spectrogram")
+        fig5, ax5 = plt.subplots(figsize=(6, 4))
+        c = ax5.pcolormesh(res['time_bins'], res['freq_bins'], res['matrix_2d'], shading='gouraud', cmap='jet')
+        fig5.colorbar(c, ax=ax5)
+        ax5.set_ylabel("Frekuensi (Hz)", fontsize=8)
+        ax5.set_xlabel("Waktu (s)", fontsize=8)
+        ax5.set_ylim(0, fs_plot / 2)
+        st.pyplot(fig5)
+        
+    with col6:
+        st.markdown("##### 3D Spectrogram")
+        # Menggunakan Plotly untuk visualisasi 3D tanpa Numpy!
+        fig6 = go.Figure(data=[go.Surface(
+            z=res['matrix_2d'], 
+            x=res['time_bins'], 
+            y=res['freq_bins'], 
+            colorscale='Jet'
+        )])
+        fig6.update_layout(
+            margin=dict(l=0, r=0, b=0, t=0),
+            scene=dict(
+                xaxis_title='Waktu (s)',
+                yaxis_title='Frekuensi (Hz)',
+                zaxis_title='Magnitude'
+            ),
+            height=400
+        )
+        st.plotly_chart(fig6, use_container_width=True)
