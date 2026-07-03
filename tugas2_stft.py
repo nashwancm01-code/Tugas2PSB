@@ -56,7 +56,7 @@ if 'fs' not in st.session_state: st.session_state.fs = 1024
 # 3. KONFIGURASI TAMPILAN STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Time-Frequency Analysis", layout="wide")
-st.title("Time-Frequency Analysis - STFT v1.0")
+st.title("Time-Frequency Analysis - STFT")
 
 # --- SIDEBAR (PANEL KONTROL) ---
 with st.sidebar:
