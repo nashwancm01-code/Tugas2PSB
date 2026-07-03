@@ -2,12 +2,11 @@ import streamlit as st
 import math
 import cmath
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go # Untuk bikin grafik 3D yang keren
+import plotly.graph_objects as go 
 
 # ==========================================
 # 1. FUNGSI MATEMATIKA & DSP MURNI
 # ==========================================
-
 def next_power_of_2(x):
     return 1 if x == 0 else 2**(x - 1).bit_length()
 
@@ -48,7 +47,6 @@ def generate_sinyal_buatan(N, fs):
 # ==========================================
 # 2. INISIALISASI MEMORI (SESSION STATE)
 # ==========================================
-# Ini supaya saat tombol diklik, datanya nggak hilang atau ke-reset sendiri
 if 'data_mentah' not in st.session_state: st.session_state.data_mentah = []
 if 'data_siap' not in st.session_state: st.session_state.data_siap = []
 if 'hasil_stft' not in st.session_state: st.session_state.hasil_stft = None
@@ -58,11 +56,10 @@ if 'fs' not in st.session_state: st.session_state.fs = 1024
 # 3. KONFIGURASI TAMPILAN STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Time-Frequency Analysis", layout="wide")
-st.title("Time-Frequency Analysis - STFT")
+st.title("Time-Frequency Analysis - STFT v1.0")
 
-# --- SIDEBAR (PANEL KONTROL SEPERTI DELPHI) ---
+# --- SIDEBAR (PANEL KONTROL) ---
 with st.sidebar:
-    # KOTAK 1: DATA
     st.markdown("### Data")
     jenis_sinyal = st.radio("Pilih Sinyal:", ["Sinyal Buatan", "Sinyal ECG"])
     
@@ -78,7 +75,7 @@ with st.sidebar:
         if jenis_sinyal == "Sinyal Buatan":
             st.session_state.data_mentah = generate_sinyal_buatan(N_data, fs_input)
             st.session_state.data_siap = st.session_state.data_mentah.copy()
-            st.session_state.hasil_stft = None # Reset hasil lama
+            st.session_state.hasil_stft = None 
         else:
             if uploaded_file is not None:
                 raw_text = uploaded_file.getvalue().decode('utf-8').splitlines()
@@ -90,7 +87,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # KOTAK 2: SET PANJANG DATA
     st.markdown("### Set Panjang Data")
     tipe_panjang = st.radio("Pilih Mode:", ["Full Data", "Ambil Data ke :"])
     
@@ -110,7 +106,6 @@ with st.sidebar:
 
     st.markdown("---")
     
-    # KOTAK 3: WINDOWING
     st.markdown("### Windowing")
     window_type = st.radio("Pilih Window:", ["Rectangular", "Bartlett", "Hanning", "Hamming", "Blackman"], index=3)
     
@@ -120,35 +115,41 @@ with st.sidebar:
     hop_size = lebar_window - irisan
     if hop_size <= 0: hop_size = 1
     
-    # Hitung otomatis jumlah window
+    # Hitung estimasi maksimal window yang muat
     jml_data_aktif = len(st.session_state.data_siap)
-    jumlah_window = 0
+    max_window = 1
     if jml_data_aktif > 0:
-        jumlah_window = max(0, (jml_data_aktif - lebar_window) // hop_size + 1)
+        max_window = max(1, (jml_data_aktif - lebar_window) // hop_size + 1)
     
-    st.info(f"Jumlah Window: **{jumlah_window}**")
+    # SEKARANG JUMLAH WINDOW JADI INPUT MANUAL
+    jumlah_window_input = st.number_input("Jumlah Window:", value=max_window, min_value=1)
     
     if st.button("STFT", type="primary"):
         if jml_data_aktif > 0:
-            # === LOGIKA STFT SEKALIGUS SIMPAN PER-WINDOW ===
             x_input = st.session_state.data_siap
             fs = st.session_state.fs
             w = get_window(window_type, lebar_window)
             nfft_stft = next_power_of_2(lebar_window)
             
-            stft_data = [] # Menyimpan semua detail per potongan
+            stft_data = [] 
             stft_matrix = []
             time_bins = []
             
-            for start in range(0, jml_data_aktif - lebar_window + 1, hop_size):
+            # SEKARANG LOOPING BERDASARKAN INPUT JUMLAH WINDOW DARI USER
+            for idx in range(jumlah_window_input):
+                start = idx * hop_size
+                
+                # Ambil potongan data (kalau kurang dari lebar_window, ujungnya ditambah 0)
                 segment = x_input[start : start + lebar_window]
+                if len(segment) < lebar_window:
+                    segment = segment + [0.0] * (lebar_window - len(segment))
+                
                 windowed = [segment[i] * w[i] for i in range(lebar_window)]
                 padded = windowed + [0.0] * (nfft_stft - lebar_window)
                 
                 X_k = radix2_fft(padded)
                 mag = [abs(c) / nfft_stft for c in X_k[:nfft_stft // 2]]
                 
-                # Simpan paket lengkap untuk potongan ini
                 stft_data.append({
                     'start_idx': start,
                     'end_idx': start + lebar_window - 1,
@@ -160,10 +161,8 @@ with st.sidebar:
                 time_bins.append((start + lebar_window / 2) / fs)
             
             freq_bins = [k * fs / nfft_stft for k in range(nfft_stft // 2)]
-            # Transpose untuk plot 2D/3D (Baris=Frekuensi, Kolom=Waktu)
             stft_transposed = [[stft_matrix[col][row] for col in range(len(stft_matrix))] for row in range(len(stft_matrix[0]))]
             
-            # Simpan semua ke memori
             st.session_state.hasil_stft = {
                 'stft_data': stft_data,
                 'time_bins': time_bins,
@@ -184,14 +183,12 @@ if len(st.session_state.data_siap) > 0:
     N_plot = len(x_plot)
     waktu_plot = [i / fs_plot for i in range(N_plot)]
     
-    # Hitung Spectrum Sinyal Input Utuh
     N_fft_full = next_power_of_2(N_plot)
     x_padded_full = x_plot + [0.0] * (N_fft_full - N_plot)
     fft_full = radix2_fft(x_padded_full)
     mag_full = [abs(c) / N_fft_full for c in fft_full[:N_fft_full // 2]]
     freq_full = [k * fs_plot / N_fft_full for k in range(N_fft_full // 2)]
 
-    # --- BARIS 1: Sinyal Input & Spectrum Input ---
     col1, col2 = st.columns([2, 1])
     with col1:
         fig1, ax1 = plt.subplots(figsize=(10, 2.5))
@@ -212,17 +209,14 @@ if len(st.session_state.data_siap) > 0:
         ax2.grid(True, linestyle=':')
         st.pyplot(fig2)
 
-# --- JIKA TOMBOL STFT SUDAH DIKLIK ---
 if st.session_state.hasil_stft is not None:
     res = st.session_state.hasil_stft
     stft_data = res['stft_data']
     
     st.markdown("---")
     
-    # --- BARIS 2: Slider Window, Sinyal Windowing & Spectrum Windowing ---
     jml_w = len(stft_data)
     if jml_w > 0:
-        # SLIDER SEPERTI DI DELPHI
         w_pilihan = st.slider(f"Pilih Window (w = 0 sampai {jml_w - 1})", 0, jml_w - 1, 0)
         
         data_terpilih = stft_data[w_pilihan]
@@ -231,12 +225,9 @@ if st.session_state.hasil_stft is not None:
         col3, col4 = st.columns([2, 1])
         with col3:
             fig3, ax3 = plt.subplots(figsize=(10, 2.5))
-            # Background sinyal asli
             ax3.plot(range(N_plot), x_plot, color='lightgray', linewidth=0.5)
             
-            # --- TRIK BUNGLON SEPERTI DELPHI ---
             if w_pilihan == 0 and jml_w >= 3:
-                # Jika w = 0, tampilkan 3 potongan pertama (Merah, Biru, Hitam) overlap
                 w0 = stft_data[0]
                 w1 = stft_data[1]
                 w2 = stft_data[2]
@@ -248,10 +239,8 @@ if st.session_state.hasil_stft is not None:
                 ax3.set_title(f"Sinyal Hasil Windowing (Overlap w=0, 1, 2)", fontsize=10)
                 ax3.legend(fontsize=7, loc='upper right')
             else:
-                # Jika w digeser, tampilkan 1 potongan saja (Hitam)
                 ax3.plot(waktu_window, data_terpilih['windowed_signal'], color='black', linewidth=1.2)
                 ax3.set_title(f"Sinyal Hasil Windowing (w = {w_pilihan}, Data = {data_terpilih['start_idx']}->{data_terpilih['end_idx']})", fontsize=10)
-            # -----------------------------------
             
             ax3.set_xlabel("n sample", fontsize=8)
             ax3.set_ylabel("Amplitude", fontsize=8)
@@ -269,9 +258,7 @@ if st.session_state.hasil_stft is not None:
             ax4.grid(True, linestyle=':')
             st.pyplot(fig4)
 
-    # --- BARIS 3: SPECTROGRAM 2D & 3D ---
     col5, col6 = st.columns([1, 1])
-    
     with col5:
         st.markdown("##### 2D Spectrogram")
         fig5, ax5 = plt.subplots(figsize=(6, 4))
@@ -284,7 +271,6 @@ if st.session_state.hasil_stft is not None:
         
     with col6:
         st.markdown("##### 3D Spectrogram")
-        # Menggunakan Plotly untuk visualisasi 3D tanpa Numpy!
         fig6 = go.Figure(data=[go.Surface(
             z=res['matrix_2d'], 
             x=res['time_bins'], 
