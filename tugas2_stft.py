@@ -56,7 +56,7 @@ if 'fs' not in st.session_state: st.session_state.fs = 1024
 # 3. KONFIGURASI TAMPILAN STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Time-Frequency Analysis", layout="wide")
-st.title("Time-Frequency Analysis - STFT")
+st.title("Time-Frequency Analysis - STFT v1.0")
 
 # --- SIDEBAR (PANEL KONTROL) ---
 with st.sidebar:
@@ -65,7 +65,7 @@ with st.sidebar:
     
     uploaded_file = None
     if jenis_sinyal == "Sinyal ECG":
-        uploaded_file = st.file_uploader("Upload file .txt", type=["txt"])
+        uploaded_file = st.file_uploader("Upload file .txt atau .csv", type=["txt", "csv"])
         
     N_data = st.number_input("Jumlah Data:", value=1024, step=128)
     fs_input = st.number_input("Frek. Sampling:", value=1024, step=128)
@@ -79,7 +79,8 @@ with st.sidebar:
         else:
             if uploaded_file is not None:
                 raw_text = uploaded_file.getvalue().decode('utf-8').splitlines()
-                st.session_state.data_mentah = [float(line.strip()) for line in raw_text if line.strip()]
+                # Proses pembersihan string dari koma tak terlihat akibat format CSV
+                st.session_state.data_mentah = [float(line.replace(',', '').strip()) for line in raw_text if line.strip()]
                 st.session_state.data_siap = st.session_state.data_mentah.copy()
                 st.session_state.hasil_stft = None
             else:
@@ -115,13 +116,11 @@ with st.sidebar:
     hop_size = lebar_window - irisan
     if hop_size <= 0: hop_size = 1
     
-    # Hitung estimasi maksimal window yang muat
     jml_data_aktif = len(st.session_state.data_siap)
     max_window = 1
     if jml_data_aktif > 0:
         max_window = max(1, (jml_data_aktif - lebar_window) // hop_size + 1)
     
-    # SEKARANG JUMLAH WINDOW JADI INPUT MANUAL
     jumlah_window_input = st.number_input("Jumlah Window:", value=max_window, min_value=1)
     
     if st.button("STFT", type="primary"):
@@ -135,11 +134,9 @@ with st.sidebar:
             stft_matrix = []
             time_bins = []
             
-            # SEKARANG LOOPING BERDASARKAN INPUT JUMLAH WINDOW DARI USER
             for idx in range(jumlah_window_input):
                 start = idx * hop_size
                 
-                # Ambil potongan data (kalau kurang dari lebar_window, ujungnya ditambah 0)
                 segment = x_input[start : start + lebar_window]
                 if len(segment) < lebar_window:
                     segment = segment + [0.0] * (lebar_window - len(segment))
@@ -183,6 +180,7 @@ if len(st.session_state.data_siap) > 0:
     N_plot = len(x_plot)
     waktu_plot = [i / fs_plot for i in range(N_plot)]
     
+    # Hitung otomatis jumlah total data awal untuk batas FFT input utuh
     N_fft_full = next_power_of_2(N_plot)
     x_padded_full = x_plot + [0.0] * (N_fft_full - N_plot)
     fft_full = radix2_fft(x_padded_full)
