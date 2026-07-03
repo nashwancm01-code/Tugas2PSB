@@ -58,7 +58,7 @@ if 'fs' not in st.session_state: st.session_state.fs = 1024
 # 3. KONFIGURASI TAMPILAN STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Time-Frequency Analysis", layout="wide")
-st.title("Time-Frequency Analysis - STFT v1.0")
+st.title("Time-Frequency Analysis - STFT")
 
 # --- SIDEBAR (PANEL KONTROL SEPERTI DELPHI) ---
 with st.sidebar:
@@ -91,7 +91,7 @@ with st.sidebar:
     st.markdown("---")
     
     # KOTAK 2: SET PANJANG DATA
-    st.markdown("### 🟢 Set Panjang Data")
+    st.markdown("### Set Panjang Data")
     tipe_panjang = st.radio("Pilih Mode:", ["Full Data", "Ambil Data ke :"])
     
     c1, c2 = st.columns(2)
